@@ -36,6 +36,7 @@ struct tcp_state* tcp_create()
 
 	t->mtu = 1400;
 	t->mss = t->mtu - TCP_SEG_HEAD_SIZE;
+	queue_init(t->recv_queue, &t->recv_queue);
 
 	return t;
 }
