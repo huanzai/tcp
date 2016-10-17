@@ -1,10 +1,11 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <stdio.h>
 
 #include "tcp.h"
 
-#define TCP_SEG_HEAD_SIZE 9
+#define TCP_SEG_HEAD_SIZE 17
 
 #define TCP_SEND_MEM 16384
 #define TCP_RECV_MEM 16384
@@ -19,7 +20,7 @@ struct queue_node {
 
 struct tcp_segment
 {
-	struct queue_node* node;
+	struct queue_node node;
 	int cmd;
 	int num;
 	int ts;
@@ -73,6 +74,7 @@ enum TCP_CMD {
 	(node)->prev=(queue)->prev;\
 	(queue)->prev->next=(node);\
 	(node)->next=(queue);\
+	(queue)->prev = (node);\
 }
 #define queue_insert(queue, cur_node, new_node) {\
 	(new_node)->prev = (cur_node)->prev;\
@@ -170,6 +172,8 @@ int tcp_recv_wnd(struct tcp_state* T)
 
 void tcp_update(struct tcp_state* T, uint32_t current)
 {
+	assert(T->output_func);
+
 	int snd_len, buf_len, mwnd, i, change, lost;
 	char buffer[2000];
 	struct queue_node* node;
@@ -259,7 +263,7 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 		s->len = len;
 
 		write_segment(buffer + buf_len, s);
-		queue_add_tail(&T->snd_queue, s->node);
+		queue_add_tail(&T->snd_queue, &s->node);
 
 		buf_len += TCP_SEG_HEAD_SIZE + len;
 		snd_len -= len;
@@ -424,8 +428,8 @@ struct tcp_segment* read_segment(const char* buf, int size)
 
 	buf = read_uint8(buf, &cmd);
 	buf = read_uint32(buf, &num);
-	buf = read_uint32(buf, &wnd);
 	buf = read_uint32(buf, &ts);
+	buf = read_uint32(buf, &wnd);
 	buf = read_uint32(buf, &len);
 	if (TCP_SEG_HEAD_SIZE + len > size) {
 		return NULL;
@@ -483,7 +487,7 @@ void recv_segment(struct tcp_state* T, struct tcp_segment* seg)
 			rcv_next += seg->len;
 
 		if (!flag && seg->num < cur->num) {
-			queue_insert(T->rcv_queue, node, seg->node);
+			queue_insert(&T->rcv_queue, node, &seg->node);
 			ts = seg->ts;
 			flag = 1;
 		} 
@@ -492,7 +496,7 @@ void recv_segment(struct tcp_state* T, struct tcp_segment* seg)
 	}
 
 	if (node == &T->rcv_queue) {
-		queue_add_tail(&T->rcv_queue, seg->node);
+		queue_add_tail(&T->rcv_queue, &seg->node);
 		ts = seg->ts;
 	}
 
@@ -512,7 +516,7 @@ void update_unack(struct tcp_state* T, int ack_next)
 		if (seg->num >= ack_next)
 			break;
 
-		queue_delete(T->snd_queue, seg->node);
+		queue_delete(&T->snd_queue, &seg->node);
 		segment_destroy(seg);
 	}
 }
@@ -533,7 +537,7 @@ void update_recv_buffer(struct tcp_state* T)
 		assert(seg->len < T->max_rcv - (T->rcv_next - T->rcv_head));
 		memcpy(T->rcv_buffer + loop_offset(T->rcv_next, TCP_RECV_MEM), seg->data, seg->len);
 
-		queue_delete(T->rcv_queue, seg->node);
+		queue_delete(&T->rcv_queue, &seg->node);
 		segment_destroy(seg);
 
 		node = node->next;

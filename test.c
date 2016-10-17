@@ -34,10 +34,10 @@ struct queue_node* create_qnode(int len)
 #define queue_is_empty(queue) ((queue)->next == queue)
 
 #define queue_add(queue, node) {\
-	(node)->next = (queue)->prev->next;\
-	(queue)->prev->next = (node);\
-	(node)->prev = (queue)->prev;\
-	(queue)->prev = node;\
+	(node)->prev=(queue)->prev;\
+	(queue)->prev->next=(node);\
+	(node)->next=(queue);\
+	(queue)->prev = (node);\
 }
 
 #define queue_del(node) {\
@@ -125,14 +125,12 @@ int output2_1(const char* buf, int len)
 
 void update(uint32_t current)
 {
-	printf("=====>>> 111  %d\n", current);
 	char buf[2000];
 
 	tunnel_update(tun, current);
 	tcp_update(T1, current);
 	tcp_update(T2, current);
 
-	printf("=====>>> 222  %d\n", current);
 	while (!queue_is_empty(&tun->out1_2)) {
 		struct queue_node* node = queue_entry(&tun->out1_2);
 		queue_del(node);
@@ -140,7 +138,6 @@ void update(uint32_t current)
 		tcp_input(T2, node->data, node->len);
 	}
 
-	printf("=====>>> 333  %d\n", current);
 	while (!queue_is_empty(&tun->out2_1)) {
 		struct queue_node* node = queue_entry(&tun->out2_1);
 		queue_del(node);
@@ -148,27 +145,31 @@ void update(uint32_t current)
 		tcp_input(T1, node->data, node->len);
 	}
 
-	printf("=====>>> 444  %d\n", current);
 	if (send_count == 0) {
 		send_count ++;
 		memcpy(buf, &send_count, sizeof(send_count));
 		tcp_send(T1, buf, sizeof(send_count));
+
+		printf("==============>>> send:%d\n", send_count);
 	}
 
-	printf("=====>>> 555  %d\n", current);
 	if (tcp_recv(T1, buf, 2000)) {
 		int recv = ((int*)buf)[0];
+		printf("==============>>> recv:%d\n", recv);
 
 		send_count ++;
 		memcpy(buf, &send_count, sizeof(send_count));
 		tcp_send(T1, buf, sizeof(send_count));
 
-		printf("=========>>> %d\n", recv);
+		printf("==============>>> send:%d\n", send_count);
 	}
 
-	printf("=====>>> 666  %d\n", current);
 	if (tcp_recv(T2, buf, 2000)) {
 		tcp_send(T2, buf, sizeof(int));
+
+		printf("==============>>> echo:%d\n", ((int*)buf)[0]);
+
+		//send_count = 10000;
 	}
 }
 
@@ -176,6 +177,9 @@ void test()
 {
 	T1 = tcp_create();
 	T2 = tcp_create();
+
+	tcp_regoutput(T1, output1_2);
+	tcp_regoutput(T2, output2_1);
 
 	tun = tunnel_create();
 
