@@ -204,9 +204,9 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 	snd_len = imin(mwnd - byte_in_sending(T), T->snd_tail - T->snd_next);
 
 	buf_len = 0;
-	if (snd_len > 0) {
-		// 
-		if (T->ack_len > 0) {
+	if (T->ack_len > 0) {
+		// send ack when timeout or can send data
+		if (snd_len > 0 || idiff(current, T->ack_timer) > TCP_ACK_INTERVAL) {
 			for (i = 0; i < T->ack_len; i++) {
 				if (buf_len >= T->mss) {
 					flush_output(T, buffer, buf_len);
@@ -222,14 +222,15 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 			}
 
 			T->ack_len = 0;
-		} else {
+		}
+	} else {
+		if (snd_len > 0) {
 			ack_seg.num = T->rcv_next;
 			ack_seg.ts  = 0;
 
 			write_segment(buffer + buf_len, &ack_seg);
-			buf_len += TCP_SEG_HEAD_SIZE;
+			buf_len += TCP_SEG_HEAD_SIZE;			
 		}
-		
 	}
 
 	while (1) {
@@ -268,24 +269,6 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 		buf_len += TCP_SEG_HEAD_SIZE + len;
 		snd_len -= len;
 		T->snd_next += len;
-	}
-
-	// send ack when timeout 
-	if (T->ack_len > 0 && idiff(current, T->ack_timer) > TCP_ACK_INTERVAL) {
-		for (i = 0; i < T->ack_len; i++) {
-			if (buf_len >= T->mss) {
-				flush_output(T, buffer, buf_len);
-				buf_len = 0;
-			}
-
-			uint32_t* ack_list = (uint32_t*)T->ack_list;
-			ack_seg.num = ack_list[i * 2 + 0];
-			ack_seg.ts  = ack_list[i * 2 + 1];
-
-			write_segment(buffer + buf_len, &ack_seg);
-			buf_len += TCP_SEG_HEAD_SIZE;
-		}
-		T->ack_len = 0;
 	}
 
 	node = T->snd_queue.next;
