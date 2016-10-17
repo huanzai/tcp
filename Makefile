@@ -1,6 +1,6 @@
 all : tcp
 
-tcp : main.c tcp3.c
+tcp : main.c tcp.c
 	gcc -g -Wall -o $@ $^ 
 
 clean :

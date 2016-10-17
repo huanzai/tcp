@@ -63,7 +63,7 @@ enum TCP_CMD {
 	TCP_CMD_ACK,
 };
 
-#define member_offset(type, member) (uint32_t)&(((type*)0)->member)
+#define member_offset(type, member) (uint64_t)&(((type*)0)->member)
 #define infer_ptr(ptr, type, member) (type*)(((char*)(ptr)) - member_offset(type, member))
 
 #define queue_init(queue, ptr) {(queue)->next = (queue)->prev = ptr;}
