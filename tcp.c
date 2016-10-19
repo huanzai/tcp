@@ -449,14 +449,15 @@ void update_ack_list(struct tcp_state* T, int num, uint32_t ts)
 void recv_segment(struct tcp_state* T, struct tcp_segment* seg)
 {
 	struct queue_node* node;
-	int flag, rcv_next, ts;
+	int flag, need_del, rcv_next, ts;
 
 	flag = 0;
+	need_del = 1;
 	rcv_next = T->rcv_next;
 	node = T->rcv_queue.next;
 
 	if (seg->len > T->max_rcv - (T->rcv_next - T->rcv_head))
-		return;
+		return need_del;
 
 	if (seg->num == rcv_next) 
 		rcv_next += seg->len;
@@ -473,6 +474,7 @@ void recv_segment(struct tcp_state* T, struct tcp_segment* seg)
 			queue_insert(&T->rcv_queue, node, &seg->node);
 			ts = seg->ts;
 			flag = 1;
+			need_del = 0;
 		} 
 
 		node = node->next;
@@ -480,12 +482,15 @@ void recv_segment(struct tcp_state* T, struct tcp_segment* seg)
 
 	if (node == &T->rcv_queue) {
 		queue_add_tail(&T->rcv_queue, &seg->node);
+		need_del = 0;
 		ts = seg->ts;
 	}
 
 	T->rcv_next = rcv_next;
 
 	update_ack_list(T, rcv_next, ts);
+
+	return need_del;
 }
 
 void update_unack(struct tcp_state* T, int ack_next)
@@ -548,11 +553,11 @@ int tcp_input(struct tcp_state* T, const char* buffer, int len)
 {
 	if (len <= 0) return -1;
 
-	int flag;
+	int del;
 	struct tcp_segment* seg;
 	struct queue_node* node;
 
-	flag = 0;
+	del = 0;
 
 	while (1) {
 		if (len < TCP_SEG_HEAD_SIZE)
@@ -564,9 +569,9 @@ int tcp_input(struct tcp_state* T, const char* buffer, int len)
 
 		if (TCP_CMD_PUSH == seg->cmd) {
 			if (seg->num >= T->rcv_next) 
-				recv_segment(T, seg);
+				del = recv_segment(T, seg);
 			else 
-				flag = 1;
+				del = 1;
 		} 
 
 		if (TCP_CMD_ACK == seg->cmd) {
@@ -596,7 +601,7 @@ int tcp_input(struct tcp_state* T, const char* buffer, int len)
 
 		len -= TCP_SEG_HEAD_SIZE + seg->len;
 
-		if (flag) segment_destroy(seg);
+		if (del) segment_destroy(seg);
 	}
 
 	update_recv_buffer(T);
