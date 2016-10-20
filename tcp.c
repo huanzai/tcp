@@ -306,13 +306,15 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 
 	if (change) {
 		T->ssth = T->cwnd / 2;
+		if (T->ssth < TCP_MIN_SSTH * T->mss)
+			T->ssth = TCP_MIN_SSTH * T->mss;
 		T->cwnd = T->ssth + 3 * T->mss;
 	}
 
 	if (lost) {
 		T->ssth = mwnd / 2;
-		if (T->ssth < TCP_MIN_SSTH)
-			T->ssth = TCP_MIN_SSTH;
+		if (T->ssth < TCP_MIN_SSTH * T->mss)
+			T->ssth = TCP_MIN_SSTH * T->mss;
 		T->cwnd = T->mss;
 	}
 
@@ -576,6 +578,7 @@ int tcp_input(struct tcp_state* T, const char* buffer, int len)
 
 		if (TCP_CMD_ACK == seg->cmd) {
 			T->rwnd = seg->wnd;
+			del = 1;
 
 			node = T->snd_queue.next;
 			while (1) {
