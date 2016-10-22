@@ -46,6 +46,7 @@ struct tcp_state {
 	struct queue_node snd_queue;
 	struct queue_node rcv_queue;
 	int cwnd;
+	float cwnd_fact;
 	int ssth;
 	int rwnd;
 	int srtt;
@@ -122,8 +123,9 @@ struct tcp_state* tcp_create()
 	t->rcv_head = 0;
 	queue_init(&t->snd_queue, &t->snd_queue);
 	queue_init(&t->rcv_queue, &t->rcv_queue);
-	t->cwnd = t->mss;
-	t->ssth = TCP_RECV_MEM;
+	t->cwnd = 1;
+	t->cwnd_fact = 0.f;
+	t->ssth = TCP_RECV_MEM/t->mss;
 	t->rwnd = TCP_RECV_MEM;
 	t->srtt = 0;
 	t->rttvar = 0;
@@ -170,6 +172,11 @@ int tcp_recv_wnd(struct tcp_state* T)
 	return T->max_rcv - (T->rcv_next - T->rcv_head);
 }
 
+int tcp_cwnd(struct tcp_state* T)
+{
+	return T->cwnd * T->mss;
+}
+
 void tcp_update(struct tcp_state* T, uint32_t current)
 {
 	assert(T->output_func);
@@ -200,7 +207,7 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 	}
 
 	// send data from snd_buffer
-	mwnd = imin(T->cwnd, T->rwnd);
+	mwnd = imin(tcp_cwnd(T), T->rwnd);
 	snd_len = imin(mwnd - byte_in_sending(T), T->snd_tail - T->snd_next);
 
 	buf_len = 0;
@@ -306,16 +313,16 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 
 	if (change) {
 		T->ssth = T->cwnd / 2;
-		if (T->ssth < TCP_MIN_SSTH * T->mss)
-			T->ssth = TCP_MIN_SSTH * T->mss;
-		T->cwnd = T->ssth + 3 * T->mss;
+		if (T->ssth < TCP_MIN_SSTH)
+			T->ssth = TCP_MIN_SSTH;
+		T->cwnd = T->ssth + 3;
 	}
 
 	if (lost) {
 		T->ssth = mwnd / 2;
-		if (T->ssth < TCP_MIN_SSTH * T->mss)
-			T->ssth = TCP_MIN_SSTH * T->mss;
-		T->cwnd = T->mss;
+		if (T->ssth < TCP_MIN_SSTH)
+			T->ssth = TCP_MIN_SSTH;
+		T->cwnd = 1;
 	}
 
 	if (buf_len > 0) {
@@ -448,7 +455,7 @@ void update_ack_list(struct tcp_state* T, int num, uint32_t ts)
 	T->ack_len++;
 }
 
-void recv_segment(struct tcp_state* T, struct tcp_segment* seg)
+int recv_segment(struct tcp_state* T, struct tcp_segment* seg)
 {
 	struct queue_node* node;
 	int flag, need_del, rcv_next, ts;
@@ -588,6 +595,19 @@ int tcp_input(struct tcp_state* T, const char* buffer, int len)
 				if (s->num + s->len == seg->num && s->ts == seg->ts) {
 					int rtt = T->current - s->ts;
 					update_rtt(T, rtt);
+
+					// Slow-start
+					if (T->cwnd < T->ssth) {
+						T->cwnd ++;
+					}
+					// Additive increase
+					else {
+						T->cwnd_fact += 1.f / T->cwnd;
+						if (T->cwnd_fact > 1.f) {
+							T->cwnd ++;
+							T->cwnd_fact -= 1.f;
+						}
+					}
 					break;
 				}
 
