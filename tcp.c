@@ -250,10 +250,11 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 		}
 
 		struct tcp_segment* s;
+		int can_write = T->mss - buf_len;
 		int len;
-		if (T->mss < snd_len) {
+		if (can_write < snd_len) {
 			s = segment_create(T->mss);
-			len = T->mss;
+			len = can_write;
 		} else {
 			s = segment_create(snd_len);
 			len = snd_len;
@@ -299,7 +300,7 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 			seg->ts = T->current;
 			seg->ack_count = 0;
 
-			if (buf_len >= T->mss) {
+			if (buf_len > 0) {
 				flush_output(T, buffer, buf_len);
 				buf_len = 0;
 			}
@@ -495,8 +496,6 @@ int recv_segment(struct tcp_state* T, struct tcp_segment* seg)
 		ts = seg->ts;
 	}
 
-	T->rcv_next = rcv_next;
-
 	update_ack_list(T, rcv_next, ts);
 
 	return need_del;
@@ -528,11 +527,13 @@ void update_recv_buffer(struct tcp_state* T)
 			break;
 
 		struct tcp_segment* seg = infer_ptr(node, struct tcp_segment, node);
-		if (seg->num >= T->rcv_next) 
+		if (seg->num != T->rcv_next) 
 			break;
 
 		assert(seg->len < T->max_rcv - (T->rcv_next - T->rcv_head));
 		memcpy(T->rcv_buffer + loop_offset(T->rcv_next, TCP_RECV_MEM), seg->data, seg->len);
+
+		T->rcv_next += seg->len;	
 
 		queue_delete(&T->rcv_queue, &seg->node);
 		segment_destroy(seg);
@@ -622,6 +623,7 @@ int tcp_input(struct tcp_state* T, const char* buffer, int len)
 			update_unack(T, seg->num);
 		}
 
+		buffer += TCP_SEG_HEAD_SIZE + seg->len;
 		len -= TCP_SEG_HEAD_SIZE + seg->len;
 
 		if (del) segment_destroy(seg);
