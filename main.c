@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include "test.c"
+#include "test_file.c"
 
 int main(void)
 {

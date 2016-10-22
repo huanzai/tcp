@@ -9,7 +9,11 @@ struct tunnel;
 struct tcp_state* T1;
 struct tcp_state* T2;
 struct tunnel* tun;
-int send_count;
+
+char* start_buf;
+char* send_buf;
+int total_send;
+int total_recv;
 
 struct queue_node {
 	struct queue_node *prev, *next;
@@ -56,7 +60,7 @@ uint32_t iclock()
 	sec = time.tv_sec;
 	usec = time.tv_usec;
 
-	value = ((uint32_t)sec) * 1000 + (usec / 1000);
+	value = (uint32_t)((sec * 1000 + usec / 1000) % 0x7fffffff);
 	return value;
 }
 
@@ -123,9 +127,40 @@ int output2_1(const char* buf, int len)
 	return 0;
 }
 
+char *read_file(const char* file, int* len)
+{
+	FILE *f = fopen(file, "rb");
+	if (!f) {
+		return NULL;
+	}
+
+	char *buf;
+	fseek(f, 0, SEEK_END);
+	*len = ftell(f);
+	buf = malloc(*len + 1);
+	rewind(f);
+	fread(buf, 1, *len, f);
+	buf[*len] = '\0';
+	fclose(f);
+	return buf;
+}
+
+void append_file(const char* file, const char* buf)
+{
+	FILE* f = fopen(file, "ab");
+	if (!f) {
+		return;
+	}
+
+	fprintf(f, "%s", buf);
+	fclose(f);
+}
+
 void update(uint32_t current)
 {
 	char buf[2000];
+	int can_send;
+	int recv_count;
 
 	tunnel_update(tun, current);
 	tcp_update(T1, current);
@@ -144,31 +179,22 @@ void update(uint32_t current)
 		tcp_input(T1, node->data, node->len);
 	}
 
-	if (send_count == 0) {
-		send_count ++;
-		memcpy(buf, &send_count, sizeof(send_count));
-		tcp_send(T1, buf, sizeof(send_count));
+	can_send = total_send - (send_buf - start_buf);
+	if (can_send > 0) {
+		int count = tcp_send(T1, send_buf, can_send);
+		send_buf += count;
 
-		printf("==============>>> send:%d\n", send_count);
+		if (count > 0) {
+			printf("==============>>> send:%d\n", (int)(send_buf - start_buf));
+		}
 	}
 
-	if (tcp_recv(T1, buf, 2000)) {
-		int recv = ((int*)buf)[0];
-		printf("==============>>> recv:%d\n", recv);
+	if ((recv_count = tcp_recv(T2, buf, 1999))) {
+		printf("==============>>> recv:%d\n", total_recv + recv_count);
 
-		send_count ++;
-		memcpy(buf, &send_count, sizeof(send_count));
-		tcp_send(T1, buf, sizeof(send_count));
-
-		printf("==============>>> send:%d\n", send_count);
-	}
-
-	if (tcp_recv(T2, buf, 2000)) {
-		tcp_send(T2, buf, sizeof(int));
-
-		//printf("==============>>> echo:%d\n", ((int*)buf)[0]);
-
-		//send_count = 10000;
+		buf[recv_count] = '\0';
+		append_file("rfc793_2.txt", buf);
+		total_recv += recv_count;
 	}
 }
 
@@ -182,9 +208,18 @@ void test()
 
 	tun = tunnel_create();
 
-	send_count = 0;
-	while (send_count <= 1000) {
+	const char* rfile = "rfc793.txt";
+	start_buf = read_file(rfile, &total_send);
+	if (!start_buf) {
+		printf("can't open file %s", rfile);
+		return;
+	}
+	send_buf = start_buf;
+
+	while (total_recv < total_send) {
 		isleep(1);
 		update(iclock());
 	}
+
+	free(start_buf);
 }

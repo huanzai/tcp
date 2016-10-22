@@ -33,6 +33,7 @@ struct tcp_segment
 };
 
 struct tcp_state {
+	int tag;
 	int mtu;
 	int mss;
 	char snd_buffer[TCP_SEND_MEM];
@@ -88,7 +89,37 @@ enum TCP_CMD {
 	(node)->next->prev = (node)->prev; \
 }
 
-#define loop_offset(cur, max) ((cur) % (max))
+
+#define lbuf_offset(cur,max) (cur % max)
+#define lbuf_write(dst, max, nxt, src, n) {\
+	int tt = lbuf_offset(nxt, max) + n;\
+	if (tt <= max) {\
+		memcpy(dst + lbuf_offset(nxt, max), src, n);\
+		nxt += n;\
+	} else {\
+		int fir_t = max - lbuf_offset(nxt, max);\
+		int sec_t = n - fir_t;\
+		memcpy(dst + lbuf_offset(nxt, max), src, fir_t);\
+		nxt += fir_t;\
+		memcpy(dst + lbuf_offset(nxt, max), src + fir_t, sec_t);\
+		nxt += sec_t;\
+	}\
+}
+
+#define lbuf_read(dst, src, max, nxt, n) {\
+	int tt = lbuf_offset(nxt, max) + n;\
+	if (tt <= max) {\
+		memcpy(dst, src + lbuf_offset(nxt, max), n);\
+		nxt += n;\
+	} else {\
+		int fir_t = max - lbuf_offset(nxt, max);\
+		int sec_t = n - fir_t;\
+		memcpy(dst, src + lbuf_offset(nxt, max), fir_t);\
+		nxt += fir_t;\
+		memcpy(dst + fir_t, src + lbuf_offset(nxt, max), sec_t);\
+		nxt += sec_t;\
+	}\
+}
 
 #define segment_create(len) malloc(sizeof(struct tcp_segment) + (len))
 #define segment_destroy(seg) {\
@@ -103,16 +134,17 @@ int imin(int a, int b)
 
 int idiff(int a, int b)
 {
-	return a > b;
+	return a - b;
 }
 
 void write_segment(char* buff, struct tcp_segment* seg);
 
-struct tcp_state* tcp_create() 
+struct tcp_state* tcp_create(int tag) 
 {
 	struct tcp_state* t = malloc(sizeof(struct tcp_state));
 	memset(t, 0, sizeof(*t));
 
+	t->tag = tag;
 	t->mtu = 1400;
 	t->mss = t->mtu - TCP_SEG_HEAD_SIZE;
 	t->max_snd = TCP_SEND_MEM;
@@ -229,6 +261,7 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 			}
 
 			T->ack_len = 0;
+			T->ack_timer = 0;
 		}
 	} else {
 		if (snd_len > 0) {
@@ -268,7 +301,7 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 		s->ack_count = 0;
 		s->rto = T->rto;
 		s->resent_ts = T->current + s->rto;
-		memcpy(s->data, T->snd_buffer + loop_offset(T->snd_next, TCP_SEND_MEM), len);
+		lbuf_read(s->data, T->snd_buffer, TCP_SEND_MEM, T->snd_next, len);
 		s->len = len;
 
 		write_segment(buffer + buf_len, s);
@@ -276,7 +309,6 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 
 		buf_len += TCP_SEG_HEAD_SIZE + len;
 		snd_len -= len;
-		T->snd_next += len;
 	}
 
 	node = T->snd_queue.next;
@@ -372,8 +404,7 @@ int tcp_send(struct tcp_state* T, const char* buffer, int len)
 	clen = T->max_snd - (T->snd_tail - T->snd_next);
 	wlen = imin(clen, len);
 
-	memcpy(T->snd_buffer + loop_offset(T->snd_tail, TCP_SEND_MEM), buffer, wlen);
-	T->snd_tail += wlen;
+	lbuf_write(T->snd_buffer, TCP_SEND_MEM, T->snd_tail, buffer, wlen);
 
 	return wlen;
 }
@@ -386,8 +417,7 @@ int tcp_recv(struct tcp_state* T, char* buffer, int len)
 	clen = T->rcv_next - T->rcv_head;
 	wlen = imin(clen, len);
 
-	memcpy(buffer, T->rcv_buffer + loop_offset(T->rcv_head, TCP_RECV_MEM), wlen);
-	T->rcv_head += wlen;
+	lbuf_read(buffer, T->rcv_buffer, TCP_RECV_MEM, T->rcv_head, wlen);
 
 	return wlen;
 }
@@ -444,7 +474,7 @@ void update_ack_list(struct tcp_state* T, int num, uint32_t ts)
 	if (T->ack_len >= T->ack_cap) {
 		int ack_cap = T->ack_cap * 2;
 		char* ack_list = malloc(sizeof(uint32_t) * 2 * ack_cap);
-		memcpy(ack_list, T->ack_list, T->ack_cap);
+		memcpy(ack_list, T->ack_list, sizeof(uint32_t) * 2 * T->ack_cap);
 		free(T->ack_list);
 		T->ack_list = ack_list;
 		T->ack_cap = ack_cap;
@@ -530,15 +560,14 @@ void update_recv_buffer(struct tcp_state* T)
 		if (seg->num != T->rcv_next) 
 			break;
 
-		assert(seg->len < T->max_rcv - (T->rcv_next - T->rcv_head));
-		memcpy(T->rcv_buffer + loop_offset(T->rcv_next, TCP_RECV_MEM), seg->data, seg->len);
+		assert(seg->len <= T->max_rcv - (T->rcv_next - T->rcv_head));
 
-		T->rcv_next += seg->len;	
+		lbuf_write(T->rcv_buffer, TCP_RECV_MEM, T->rcv_next, seg->data, seg->len);
 
 		queue_delete(&T->rcv_queue, &seg->node);
-		segment_destroy(seg);
-
 		node = node->next;
+		
+		segment_destroy(seg);
 	}
 }
 
