@@ -33,6 +33,12 @@ struct queue_node* create_qnode(int len)
 	return malloc(sizeof(struct queue_node) + len);
 }
 
+#define destroy_qnode(node) {\
+	if (node)\
+		free(node);\
+	node = NULL;\
+}
+
 #define queue_init(queue, ptr) ((queue)->prev = (queue)->next = ptr)
 
 #define queue_is_empty(queue) ((queue)->next == queue)
@@ -170,6 +176,7 @@ void update(uint32_t current)
 		struct queue_node* node = queue_entry(&tun->out1_2);
 		queue_del(node);
 		tcp_input(T2, node->data, node->len);
+		destroy_qnode(node);
 	}
 
 	while (!queue_is_empty(&tun->out2_1)) {
@@ -177,6 +184,7 @@ void update(uint32_t current)
 		queue_del(node);
 
 		tcp_input(T1, node->data, node->len);
+		destroy_qnode(node);
 	}
 
 	can_send = total_send - (send_buf - start_buf);
