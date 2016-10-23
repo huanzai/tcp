@@ -26,6 +26,10 @@ struct tunnel {
 	struct queue_node in2_1;
 	struct queue_node out1_2;
 	struct queue_node out2_1;
+	int counter1_2;
+	int counter2_1;
+	int lost1_2;
+	int lost2_1;
 };
 
 struct queue_node* create_qnode(int len)
@@ -82,6 +86,10 @@ struct tunnel* tunnel_create()
 	queue_init(&t->in2_1, &t->in2_1);
 	queue_init(&t->out1_2, &t->out1_2);
 	queue_init(&t->out2_1, &t->out2_1);
+	t->counter1_2 = 0;
+	t->counter2_1 = 0;
+	t->lost1_2 = rand() % 20;
+	t->lost2_1 = rand() % 20;
 	
 	return t;
 }
@@ -95,7 +103,14 @@ void tunnel_update(struct tunnel* t, uint32_t current)
 		struct queue_node* node = queue_entry(&t->in1_2);
 		queue_del(node);
 
-		queue_add(&t->out1_2, node);
+		t->counter1_2++;
+		if (t->counter1_2 % t->lost1_2 == 0) {
+			printf("=========>>>> lost one\n");
+			destroy_qnode(node);
+			t->lost1_2 = rand() % 20 + 1;
+		} else {
+			queue_add(&t->out1_2, node);
+		}
 	}
 
 	while(1) {
@@ -105,6 +120,7 @@ void tunnel_update(struct tunnel* t, uint32_t current)
 		struct queue_node* node = queue_entry(&t->in2_1);
 		queue_del(node);
 
+		t->counter2_1++;
 		queue_add(&t->out2_1, node);
 	}
 }
@@ -208,6 +224,7 @@ void update(uint32_t current)
 
 void test()
 {
+	srand(time(NULL));
 	T1 = tcp_create(1001);
 	T2 = tcp_create(1002);
 
@@ -224,10 +241,13 @@ void test()
 	}
 	send_buf = start_buf;
 
+	uint32_t start_ts = iclock();
 	while (total_recv < total_send) {
 		isleep(1);
 		update(iclock());
 	}
+	uint32_t end_ts = iclock();
+	printf("========>>>> total_cost:%d\n", end_ts - start_ts);
 
 	free(start_buf);
 }

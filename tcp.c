@@ -80,7 +80,7 @@ enum TCP_CMD {
 }
 #define queue_insert(queue, cur_node, new_node) {\
 	(new_node)->prev = (cur_node)->prev;\
-	(new_node)->prev->next = (new_node);\
+	(cur_node)->prev->next = (new_node);\
 	(new_node)->next = (cur_node);\
 	(cur_node)->prev = (new_node);\
 }
@@ -123,7 +123,8 @@ enum TCP_CMD {
 
 #define segment_create(len) malloc(sizeof(struct tcp_segment) + (len))
 #define segment_destroy(seg) {\
-	free(seg);\
+	if (!seg)\
+		free(seg);\
 	seg = NULL;\
 }
 
@@ -274,7 +275,7 @@ void tcp_update(struct tcp_state* T, uint32_t current)
 	}
 
 	while (1) {
-		if (snd_len == 0)
+		if (snd_len <= 0)
 			break;
 
 		if (buf_len >= T->mss) {
@@ -508,7 +509,10 @@ int recv_segment(struct tcp_state* T, struct tcp_segment* seg)
 
 		struct tcp_segment* cur = infer_ptr(node, struct tcp_segment, node);
 		if (cur->num == rcv_next) 
-			rcv_next += seg->len;
+			rcv_next += cur->len;
+
+		if (seg->num == cur->num) 
+			flag = 1;
 
 		if (!flag && seg->num < cur->num) {
 			queue_insert(&T->rcv_queue, node, &seg->node);
@@ -520,7 +524,7 @@ int recv_segment(struct tcp_state* T, struct tcp_segment* seg)
 		node = node->next;
 	}
 
-	if (node == &T->rcv_queue) {
+	if (!flag) {
 		queue_add_tail(&T->rcv_queue, &seg->node);
 		need_del = 0;
 		ts = seg->ts;
@@ -553,7 +557,7 @@ void update_recv_buffer(struct tcp_state* T)
 
 	node = T->rcv_queue.next;
 	while (1) {
-		if (node == &T->rcv_queue)
+		if (node == &T->rcv_queue) 
 			break;
 
 		struct tcp_segment* seg = infer_ptr(node, struct tcp_segment, node);
@@ -564,9 +568,9 @@ void update_recv_buffer(struct tcp_state* T)
 
 		lbuf_write(T->rcv_buffer, TCP_RECV_MEM, T->rcv_next, seg->data, seg->len);
 
-		queue_delete(&T->rcv_queue, &seg->node);
 		node = node->next;
-		
+		queue_delete(&T->rcv_queue, &seg->node);
+
 		segment_destroy(seg);
 	}
 }
@@ -632,6 +636,7 @@ int tcp_input(struct tcp_state* T, const char* buffer, int len)
 					}
 					// Additive increase
 					else {
+						assert(T->cwnd > 0);
 						T->cwnd_fact += 1.f / T->cwnd;
 						if (T->cwnd_fact > 1.f) {
 							T->cwnd ++;
@@ -656,9 +661,9 @@ int tcp_input(struct tcp_state* T, const char* buffer, int len)
 		len -= TCP_SEG_HEAD_SIZE + seg->len;
 
 		if (del) segment_destroy(seg);
-	}
 
-	update_recv_buffer(T);
+		update_recv_buffer(T);
+	}
 
 	return 0;
 }
